@@ -5,6 +5,7 @@ using IniParser;
 using IniParser.Model;
 using System.Threading.Tasks;
 using System.Runtime.InteropServices;
+using System.Net.Http;
 
 namespace FortniteLauncherApp
 {
@@ -60,7 +61,12 @@ Options:
         private const uint MEM_RESERVE = 0x2000;
         private const uint PAGE_READWRITE = 4;
 
-        static async Task Main(string[] args)
+        public static void Main(string[] args)
+        {
+            Task.Run(async () => await StartLauncherAsync()).GetAwaiter().GetResult();
+        }
+
+        private static async Task StartLauncherAsync()
         {
             ShowMenu();
             await HandleUserChoice();
@@ -74,7 +80,7 @@ Options:
             Console.WriteLine(options);
         }
 
-        static async Task HandleUserChoice()
+        private static async Task HandleUserChoice()
         {
             string answer = Console.ReadLine().Trim();
 
@@ -99,7 +105,7 @@ Options:
             }
         }
 
-        static async Task AddBuild()
+        private static async Task AddBuild()
         {
             if (File.Exists(buildFilePath))
             {
@@ -114,7 +120,7 @@ Options:
 
                     if (answer == "yes")
                     {
-                        RemoveOldBuild(() =>
+                        await RemoveOldBuild(() =>
                         {
                             AskForNewBuild();
                         });
@@ -127,16 +133,31 @@ Options:
                 }
                 else
                 {
-                    AskForNewBuild();
+                    await AskForNewBuild();
                 }
             }
             else
             {
-                AskForNewBuild();
+                await AskForNewBuild();
             }
         }
 
-        static async Task AskForNewBuild()
+        private static async Task RemoveOldBuild(Action callback)
+        {
+            Console.WriteLine("Removing old build...");
+            if (File.Exists(buildFilePath))
+            {
+                var parser = new FileIniDataParser();
+                IniData config = parser.ReadFile(buildFilePath);
+                config.Sections.RemoveSection("build");
+                parser.WriteFile(buildFilePath, config);
+                Console.WriteLine("Old build removed.");
+            }
+
+            callback();
+        }
+
+        private static async Task AskForNewBuild()
         {
             Console.WriteLine("Enter the path of the build: ");
             string buildPath = Console.ReadLine().Trim();
@@ -159,22 +180,7 @@ Options:
             await HandleUserChoice();
         }
 
-        static void RemoveOldBuild(Action callback)
-        {
-            Console.WriteLine("Removing old build...");
-            if (File.Exists(buildFilePath))
-            {
-                var parser = new FileIniDataParser();
-                IniData config = parser.ReadFile(buildFilePath);
-                config.Sections.RemoveSection("build");
-                parser.WriteFile(buildFilePath, config);
-                Console.WriteLine("Old build removed.");
-            }
-
-            callback();
-        }
-
-        static async Task AddCredentials()
+        private static async Task AddCredentials()
         {
             var parser = new FileIniDataParser();
             IniData config = new IniData();
@@ -204,7 +210,7 @@ Options:
             await HandleUserChoice();
         }
 
-        static async Task LaunchGame()
+        private static async Task LaunchGame()
         {
             Console.Clear();
             string email = "";
@@ -234,7 +240,7 @@ Options:
                 }
 
                 Console.WriteLine($"Launching game with build located at: {buildPath}");
-                Launch(buildPath, email, password);
+                await Launch(buildPath, email, password);
             }
             else
             {
@@ -243,39 +249,55 @@ Options:
             }
         }
 
-        static void Launch(string buildPath, string email, string password)
+        private static async Task Launch(string buildPath, string email, string password)
         {
             string launcherPath = Path.Combine(buildPath, "FortniteGame\\Binaries\\Win64\\FortniteLauncher.exe");
             string eac_path = Path.Combine(buildPath, "FortniteGame\\Binaries\\Win64\\FortniteClient-Win64-Shipping_EAC.exe");
             string bePath = Path.Combine(buildPath, "FortniteGame\\Binaries\\Win64\\FortniteClient-Win64-Shipping_BE.exe");
             string clientPath = Path.Combine(buildPath, "FortniteGame\\Binaries\\Win64\\FortniteClient-Win64-Shipping.exe");
+            string RedirectPath = Path.Combine(buildPath, "Engine\\Binaries\\ThirdParty\\NVIDIA\\NVaftermath\\Win64\\GFSDK_Aftermath_Lib.x64.dll");
+
+            string redirectDllUrl = "REDIRECT_URL";
+
+            Console.WriteLine(launcherPath);
 
             try
             {
-                Console.WriteLine("Launching FortniteClient...");
-                Process process = Process.Start(launcherPath);
-                SuspendProcess(process);
+                Console.WriteLine("Downloading redirect.dll...");
+                await DownloadFileAsync(redirectDllUrl, RedirectPath);
+                if (File.Exists(RedirectPath))
+                {
+                    Console.WriteLine("redirect.dll downloaded successfully!");
+                    Console.WriteLine("Launching FortniteClient...");
+                    Process process = Process.Start(launcherPath);
+                    SuspendProcess(process);
 
-                Process eac = Process.Start(eac_path);
-                SuspendProcess(eac);
+                    Process eac = Process.Start(eac_path);
+                    SuspendProcess(eac);
 
-                Process be = Process.Start(bePath);
-                SuspendProcess(be);
+                    Process be = Process.Start(bePath);
+                    SuspendProcess(be);
 
-                string clientArgs = $"-AUTH_TYPE=epic -auth_login={email} -auth_password={password} -epicapp=Fortnite -epicenv=Prod -epiclocale=en-us -epicportal -skippatchcheck -nobe -fromfl=eac -fltoken=3db3ba5dcbd2e16703f3978d -caldera=eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2NvdW50X2lkIjoiYmU5ZGE1YzJmYmVhNDQwN2IyZjQwZWJhYWQ4NTlhZDQiLCJnZW5lcmF0ZWQiOjE2Mzg3MTcyNzgsImNhbGRlcmFHdWlkIjoiMzgxMGI4NjMtMmE2NS00NDU3LTliNTgtNGRhYjNiNDgyYTg2IiwiYWNQcm92aWRlciI6IkVhc3lBbnRpQ2hlYXQiLCJub3RlcyI6IiIsImZhbGxiYWNrIjpmYWxzZX0.VAWQB67RTxhiWOxx7DBjnzDnXyyEnX7OljJm-j2d88G_WgwQ9wrE6lwMEHZHjBd1ISJdUO1UVUqkfLdU5nofBQ";
-                Process FortniteClient = Process.Start(clientPath, clientArgs);
-                FortniteClient.WaitForInputIdle();
-                ShowMenu();
-                HandleUserChoice();
-                Console.Clear();
+                    string clientArgs = $"-AUTH_TYPE=epic -auth_login={email} -auth_password={password} -epicapp=Fortnite -epicenv=Prod -epiclocale=en-us -epicportal -skippatchcheck -nobe -fromfl=eac -fltoken=3db3ba5dcbd2e16703f3978d -caldera=eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2NvdW50X2lkIjoiYmU5ZGE1YzJmYmVhNDQwN2IyZjQwZWJhYWQ4NTlhZDQiLCJnZW5lcmF0ZWQiOjE2Mzg3MTcyNzgsImNhbGRlcmFHdWlkIjoiMzgxMGI4NjMtMmE2NS00NDU3LTliNTgtNGRhYjNiNDgyYTg2IiwiYWNQcm92aWRlciI6IkVhc3lBbnRpQ2hlYXQiLCJub3RlcyI6IiIsImZhbGxiYWNrIjpmYWxzZX0.VAWQB67RTxhiWOxx7DBjnzDnXyyEnX7OljJm-j2d88G_WgwQ9wrE6lwMEHZHjBd1ISJdUO1UVUqkfLdU5nofBQ";
+                    Process FortniteClient = Process.Start(clientPath, clientArgs);
+                    FortniteClient.WaitForInputIdle();
+
+                    ShowMenu();
+                    await HandleUserChoice();
+                    Console.Clear();
+                }
+                else
+                {
+                    Console.WriteLine("Failed to download redirect.dll. Please check your internet connection.");
+                }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error launching Fortnite: {ex.Message}");
+                Console.WriteLine($"Error downloading redirect.dll: {ex.Message}");
             }
         }
 
-        static void SuspendProcess(Process process)
+        private static void SuspendProcess(Process process)
         {
             try
             {
@@ -298,7 +320,43 @@ Options:
             }
         }
 
-        static void CloseFortnite()
+        private static async Task DownloadFileAsync(string fileUrl, string path)
+        {
+            try
+            {
+                using (HttpClient client = new HttpClient())
+                {
+                    HttpResponseMessage response = await client.GetAsync(fileUrl);
+                    response.EnsureSuccessStatusCode();
+
+                    byte[] fileBytes = await response.Content.ReadAsByteArrayAsync();
+
+                    string exePath = AppDomain.CurrentDomain.BaseDirectory;
+                    string downloadsPath = System.IO.Path.Combine(exePath, "downloads");
+
+                    if (!Directory.Exists(downloadsPath))
+                    {
+                        Directory.CreateDirectory(downloadsPath);
+                    }
+
+                    await WriteBytesToFileAsync(path, fileBytes);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Failed to download file {ex.Message}");
+            }
+        }
+
+        private static async Task WriteBytesToFileAsync(string filePath, byte[] fileBytes)
+        {
+            using (FileStream fs = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.None, 4096, true))
+            {
+                await fs.WriteAsync(fileBytes, 0, fileBytes.Length);
+            }
+        }
+
+        private static void CloseFortnite()
         {
             foreach (var process in Process.GetProcessesByName("FortniteLauncher"))
             {
